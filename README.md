@@ -147,6 +147,12 @@ npm run build
 npm run deploy
 ```
 
+**Important Note about CORS:** GitHub Pages doesn't natively support the required CORS headers for WebContainer API. This project includes a service worker (`coi-serviceworker.js`) that automatically adds the necessary headers:
+- `Cross-Origin-Embedder-Policy: require-corp`
+- `Cross-Origin-Opener-Policy: same-origin`
+
+The service worker is automatically registered when the page loads, enabling SharedArrayBuffer support required by WebContainer.
+
 ### Docker
 
 ```dockerfile
