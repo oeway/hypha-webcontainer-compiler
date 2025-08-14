@@ -699,33 +699,230 @@ window.addEventListener('load', async () => {
       }
     }
     
-    // Register the compilation service
+    // Keep track of running processes
+    const runningProcesses = new Map();
+    let processIdCounter = 0;
+    
+    // File System Operations
+    async function fs_mkdir(path, options = {}) {
+      addLog(`📁 Creating directory: ${path}`);
+      await webcontainerInstance.fs.mkdir(path, options);
+      return { success: true, path };
+    }
+    
+    async function fs_readdir(path, options = {}) {
+      addLog(`📂 Reading directory: ${path}`);
+      const entries = await webcontainerInstance.fs.readdir(path, options);
+      return entries;
+    }
+    
+    async function fs_readFile(path, encoding = 'utf-8') {
+      addLog(`📄 Reading file: ${path}`);
+      const content = await webcontainerInstance.fs.readFile(path, encoding);
+      return content;
+    }
+    
+    async function fs_writeFile(path, data, options = {}) {
+      addLog(`✏️ Writing file: ${path}`);
+      await webcontainerInstance.fs.writeFile(path, data, options);
+      await window.refreshFileTree(); // Auto-refresh file tree
+      return { success: true, path };
+    }
+    
+    async function fs_rm(path, options = {}) {
+      addLog(`🗑️ Removing: ${path}`);
+      await webcontainerInstance.fs.rm(path, options);
+      await window.refreshFileTree(); // Auto-refresh file tree
+      return { success: true, path };
+    }
+    
+    async function fs_rename(oldPath, newPath) {
+      addLog(`📝 Renaming: ${oldPath} → ${newPath}`);
+      await webcontainerInstance.fs.rename(oldPath, newPath);
+      await window.refreshFileTree(); // Auto-refresh file tree
+      return { success: true, oldPath, newPath };
+    }
+    
+    // Mount a file system tree
+    async function mount(tree, options = {}) {
+      addLog(`📦 Mounting file system tree...`);
+      await webcontainerInstance.mount(tree, options);
+      await window.refreshFileTree();
+      return { success: true, message: 'File system tree mounted' };
+    }
+    
+    // Export filesystem
+    async function exportFS(path = '/', options = {}) {
+      addLog(`📤 Exporting filesystem from: ${path}`);
+      const data = await webcontainerInstance.export(path, options);
+      
+      // Convert to base64 if binary data
+      if (data instanceof Uint8Array) {
+        const base64 = btoa(String.fromCharCode(...data));
+        return { type: 'binary', data: base64, path };
+      }
+      
+      return { type: 'json', data, path };
+    }
+    
+    // Enhanced spawn with process tracking
+    async function spawnWithTracking(command, args = [], options = {}) {
+      const processId = `proc_${++processIdCounter}`;
+      addLog(`🚀 Spawning process [${processId}]: ${command} ${args.join(' ')}`);
+      
+      try {
+        const process = await webcontainerInstance.spawn(command, args, options);
+        
+        // Store process reference
+        runningProcesses.set(processId, {
+          id: processId,
+          command,
+          args,
+          process,
+          startTime: new Date().toISOString()
+        });
+        
+        // Capture output
+        let output = '';
+        let errorOutput = '';
+        
+        if (options.output !== false) {
+          process.output.pipeTo(new WritableStream({
+            write(data) {
+              output += data;
+              addLog(`  [${processId}] ${data}`);
+            }
+          }));
+        }
+        
+        // Wait for exit and clean up
+        process.exit.then(exitCode => {
+          runningProcesses.delete(processId);
+          addLog(`✅ Process [${processId}] exited with code: ${exitCode}`);
+        });
+        
+        return {
+          processId,
+          command,
+          args,
+          startTime: new Date().toISOString()
+        };
+        
+      } catch (error) {
+        addLog(`❌ Failed to spawn process: ${error.message}`);
+        throw error;
+      }
+    }
+    
+    // Kill a process
+    async function killProcess(processId) {
+      const proc = runningProcesses.get(processId);
+      if (!proc) {
+        throw new Error(`Process ${processId} not found`);
+      }
+      
+      addLog(`⛔ Killing process [${processId}]`);
+      proc.process.kill();
+      runningProcesses.delete(processId);
+      
+      return { success: true, processId };
+    }
+    
+    // List running processes
+    async function listProcesses() {
+      const processes = Array.from(runningProcesses.values()).map(p => ({
+        id: p.id,
+        command: p.command,
+        args: p.args,
+        startTime: p.startTime
+      }));
+      
+      return processes;
+    }
+    
+    // Get WebContainer info
+    async function getInfo() {
+      return {
+        status: 'ready',
+        workdir: webcontainerInstance.workdir,
+        path: webcontainerInstance.path,
+        processes: runningProcesses.size,
+        features: {
+          fileSystem: true,
+          spawn: true,
+          mount: true,
+          export: true,
+          artifactIntegration: true
+        }
+      };
+    }
+    
+    // Register the comprehensive WebContainer service
     const service = await server.registerService({
       id: 'webcontainer-compiler',
       name: 'WebContainer Compilation Service',
-      description: 'A service for compiling and building applications using WebContainer',
+      description: 'A comprehensive service for code compilation, file system operations, and process management using WebContainer',
       config: {
         visibility: 'public',
         require_context: false
       },
+      
+      // Original compilation functions
       loadArtifact: loadArtifact,
       spawn: spawn,
       publishArtifact: publishArtifact,
-      getStatus: async () => {
-        return {
-          status: 'ready',
-          webcontainer: webcontainerInstance ? 'initialized' : 'not initialized'
-        };
-      }
+      
+      // File System operations
+      fs: {
+        mkdir: fs_mkdir,
+        readdir: fs_readdir,
+        readFile: fs_readFile,
+        writeFile: fs_writeFile,
+        rm: fs_rm,
+        rename: fs_rename
+      },
+      
+      // Mount and export
+      mount: mount,
+      export: exportFS,
+      
+      // Process management
+      spawnProcess: spawnWithTracking,
+      killProcess: killProcess,
+      listProcesses: listProcesses,
+      
+      // System info
+      getInfo: getInfo,
     });
     
     statusEl.textContent = 'Service registered and ready!';
     addLog(`✓ Service registered with ID: ${service.id}`);
-    addLog(`\nService endpoints:`);
-    addLog(`  - loadArtifact(artifactId, srcDir): Load files from artifact`);
-    addLog(`  - spawn(command, args): Execute commands`);
-    addLog(`  - publishArtifact(srcDir, artifactId, targetDir): Upload build output`);
-    addLog(`\nService URL: ${queryParams.server_url}/${server.config.workspace}/services/${service.id.split(':')[1]}`);
+    addLog(`\n📚 Service Endpoints:`);
+    
+    addLog(`\n🔧 Compilation & Artifacts:`);
+    addLog(`  • loadArtifact(artifactId, srcDir) - Load files from artifact`);
+    addLog(`  • publishArtifact(srcDir, artifactId, targetDir) - Upload build output`);
+    
+    addLog(`\n📁 File System Operations:`);
+    addLog(`  • fs.mkdir(path, options) - Create directory`);
+    addLog(`  • fs.readdir(path, options) - List directory contents`);
+    addLog(`  • fs.readFile(path, encoding) - Read file content`);
+    addLog(`  • fs.writeFile(path, data, options) - Write file`);
+    addLog(`  • fs.rm(path, options) - Remove file/directory`);
+    addLog(`  • fs.rename(oldPath, newPath) - Rename file/directory`);
+    
+    addLog(`\n🚀 Process Management:`);
+    addLog(`  • spawn(command, args) - Simple command execution`);
+    addLog(`  • spawnProcess(command, args, options) - Tracked process with ID`);
+    addLog(`  • killProcess(processId) - Kill a running process`);
+    addLog(`  • listProcesses() - List all running processes`);
+    
+    addLog(`\n📦 Advanced Features:`);
+    addLog(`  • mount(tree, options) - Mount file system tree`);
+    addLog(`  • export(path, options) - Export filesystem as JSON/binary`);
+    addLog(`  • getInfo() - Get WebContainer system information`);
+    
+    addLog(`\n🔗 Service URL: ${queryParams.server_url}/${server.config.workspace}/services/${service.id.split(':')[1]}`);
     
     // Show and setup test button functionality
     const testButton = document.getElementById('test-button');
