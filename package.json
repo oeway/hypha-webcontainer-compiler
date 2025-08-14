@@ -1,15 +1,32 @@
 {
-  "name": "webcontainers-api-starter",
-  "private": true,
-  "version": "0.0.0",
+  "name": "hypha-webcontainer-compiler",
+  "version": "1.0.0",
+  "description": "A browser-based compilation service using WebContainer API and Hypha RPC for remote code compilation and artifact management",
   "type": "module",
+  "author": "",
+  "license": "MIT",
+  "keywords": [
+    "webcontainer",
+    "compiler",
+    "hypha",
+    "rpc",
+    "browser-based",
+    "compilation-service",
+    "artifact-manager"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/hypha-webcontainer-compiler"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && gh-pages -d dist"
   },
   "devDependencies": {
-    "vite": "^4.1.0"
+    "vite": "^4.1.0",
+    "gh-pages": "^6.0.0"
   },
   "dependencies": {
     "@webcontainer/api": "^1.1.3"
