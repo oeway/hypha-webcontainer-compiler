@@ -64,7 +64,29 @@ async function writeFilesRecursive(fs, files) {
 window.addEventListener('load', async () => {
   console.log('Initializing WebContainer compilation service...');
   
-  // Update UI with enhanced layout
+  // Load xterm.js and fit addon
+  const xtermCSS = document.createElement('link');
+  xtermCSS.rel = 'stylesheet';
+  xtermCSS.href = 'https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css';
+  document.head.appendChild(xtermCSS);
+  
+  const xtermScript = document.createElement('script');
+  xtermScript.src = 'https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js';
+  await new Promise((resolve, reject) => {
+    xtermScript.onload = resolve;
+    xtermScript.onerror = reject;
+    document.head.appendChild(xtermScript);
+  });
+  
+  const xtermFitScript = document.createElement('script');
+  xtermFitScript.src = 'https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js';
+  await new Promise((resolve, reject) => {
+    xtermFitScript.onload = resolve;
+    xtermFitScript.onerror = reject;
+    document.head.appendChild(xtermFitScript);
+  });
+  
+  // Update UI with enhanced layout including terminal tab
   document.querySelector('#app').innerHTML = `
     <div class="container">
       <div class="header">
@@ -100,6 +122,7 @@ window.addEventListener('load', async () => {
         <div class="content-area">
           <div class="tabs">
             <button class="tab active" data-tab="logs">Console Logs</button>
+            <button class="tab" data-tab="terminal">Terminal</button>
             <button class="tab" data-tab="file">File Viewer</button>
             <button class="tab" data-tab="preview">Preview</button>
           </div>
@@ -109,6 +132,10 @@ window.addEventListener('load', async () => {
             <div class="logs-container">
               <pre id="logs"></pre>
             </div>
+          </div>
+          
+          <div class="tab-content" id="terminal-tab">
+            <div id="terminal-container" style="width: 100%; height: 100%; background: #1e1e1e; padding:4px;"></div>
           </div>
           
           <div class="tab-content" id="file-tab">
@@ -151,6 +178,13 @@ window.addEventListener('load', async () => {
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       tab.classList.add('active');
       document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
+      
+      // Resize terminal when terminal tab is activated
+      if (tab.dataset.tab === 'terminal' && fitAddon) {
+        setTimeout(() => {
+          fitAddon.fit();
+        }, 0);
+      }
     });
   });
   
@@ -340,11 +374,105 @@ window.addEventListener('load', async () => {
     window.refreshFileTree();
   });
   
+  // Initialize terminal variables
+  let terminal = null;
+  let terminalProcess = null;
+  let fitAddon = null;
+  
+  // Function to initialize terminal
+  async function initializeTerminal() {
+    if (!webcontainerInstance) {
+      console.error('WebContainer not initialized');
+      return;
+    }
+    
+    const terminalContainer = document.getElementById('terminal-container');
+    if (!terminalContainer) return;
+    
+    // Create terminal instance
+    terminal = new window.Terminal({
+      convertEol: true,
+      fontSize: 14,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      theme: {
+        background: '#1e1e1e',
+        foreground: '#cccccc',
+        cursor: '#ffffff',
+        black: '#000000',
+        red: '#cd3131',
+        green: '#0dbc79',
+        yellow: '#e5e510',
+        blue: '#2472c8',
+        magenta: '#bc3fbc',
+        cyan: '#11a8cd',
+        white: '#e5e5e5',
+        brightBlack: '#666666',
+        brightRed: '#f14c4c',
+        brightGreen: '#23d18b',
+        brightYellow: '#f5f543',
+        brightBlue: '#3b8eea',
+        brightMagenta: '#d670d6',
+        brightCyan: '#29b8db',
+        brightWhite: '#e5e5e5'
+      }
+    });
+    
+    // Initialize fit addon
+    fitAddon = new window.FitAddon.FitAddon();
+    terminal.loadAddon(fitAddon);
+    
+    // Open terminal in container
+    terminal.open(terminalContainer);
+    fitAddon.fit();
+    
+    // Resize terminal on window resize
+    window.addEventListener('resize', () => {
+      if (fitAddon && document.getElementById('terminal-tab').classList.contains('active')) {
+        fitAddon.fit();
+      }
+    });
+    
+    // Start shell process
+    terminalProcess = await webcontainerInstance.spawn('jsh', [], {
+      terminal: {
+        cols: terminal.cols,
+        rows: terminal.rows,
+      }
+    });
+    
+    // Create a writer for the process input
+    const input = terminalProcess.input.getWriter();
+    
+    // Connect terminal input to process
+    terminal.onData((data) => {
+      input.write(data);
+    });
+    
+    // Connect process output to terminal
+    terminalProcess.output.pipeTo(new WritableStream({
+      write(data) {
+        terminal.write(data);
+      }
+    }));
+    
+    // Handle terminal resize
+    terminal.onResize(({ cols, rows }) => {
+      if (terminalProcess.resize) {
+        terminalProcess.resize({ cols, rows });
+      }
+    });
+    
+    addLog('✓ Terminal initialized');
+  }
+  
   try {
     // Initialize WebContainer first
     statusEl.textContent = 'Booting WebContainer...';
     webcontainerInstance = await WebContainer.boot();
     addLog('✓ WebContainer booted successfully');
+    
+    // Initialize terminal after WebContainer is ready
+    await initializeTerminal();
     
     // Get connection parameters from URL
     const queryParams = getQueryParams();

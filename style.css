@@ -319,6 +319,16 @@ body {
   opacity: 0.5;
 }
 
+/* Terminal specific styling */
+#terminal-tab {
+  padding: 0;
+  height: 100%;
+}
+
+#terminal-container {
+  height: 100% !important;
+}
+
 /* Status styles */
 .status {
   width: 100%;
