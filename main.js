@@ -169,6 +169,7 @@ window.addEventListener('load', async () => {
   function addLog(message) {
     logsEl.textContent += message + '\n';
     logsEl.scrollTop = logsEl.scrollHeight;
+    console.log(message);
   }
   
   // Tab switching
@@ -489,8 +490,12 @@ window.addEventListener('load', async () => {
     
     addLog('✓ Hypha RPC client loaded');
     
-    // Check if we have a token
-    if (!queryParams.token) {
+    // For worker mode: if we have server_url, workspace, and token, connect immediately
+    // This is needed when Hypha starts the app as a worker
+    if (queryParams.server_url && queryParams.workspace && queryParams.token) {
+      // Direct connection for worker mode
+      await connectToServer(queryParams, queryParams.token);
+    } else if (!queryParams.token) {
       // No token provided, show login button and workspace input
       statusEl.textContent = 'Login required';
       addLog('\n⚠️ No authentication token provided');
@@ -565,10 +570,10 @@ window.addEventListener('load', async () => {
       });
       
       return; // Don't proceed without login
+    } else {
+      // We have a token but maybe missing workspace, try to connect anyway
+      await connectToServer(queryParams, queryParams.token);
     }
-    
-    // We have a token, proceed with connection
-    await connectToServer(queryParams, queryParams.token);
     
   } catch (error) {
     console.error('Initialization error:', error);
