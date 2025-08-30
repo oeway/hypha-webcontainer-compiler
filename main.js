@@ -480,7 +480,7 @@ window.addEventListener('load', async () => {
     // Load Hypha RPC client
     statusEl.textContent = 'Loading Hypha RPC client...';
     const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/hypha-rpc@0.20.66/dist/hypha-rpc-websocket.min.js';
+    script.src = 'https://cdn.jsdelivr.net/npm/hypha-rpc@0.20.79/dist/hypha-rpc-websocket.min.js';
     await new Promise((resolve, reject) => {
       script.onload = resolve;
       script.onerror = reject;
@@ -985,42 +985,229 @@ window.addEventListener('load', async () => {
       };
     }
     
-    // Register the comprehensive WebContainer service
+    // Session management for the worker
+    const sessions = new Map();
+    const sessionLogs = new Map();
+    let sessionCounter = 0;
+    
+    // Helper to add log entry
+    function addSessionLog(sessionId, type, message) {
+      if (!sessionLogs.has(sessionId)) {
+        sessionLogs.set(sessionId, []);
+      }
+      sessionLogs.get(sessionId).push({
+        timestamp: new Date().toISOString(),
+        type: type,
+        message: message
+      });
+      // Also add to UI logs
+      addLog(`[${sessionId}] ${message}`);
+    }
+    
+    // Register the WebContainer worker service
     const service = await server.registerService({
-      id: 'webcontainer-compiler',
-      name: 'WebContainer Compilation Service',
-      description: 'A comprehensive service for code compilation, file system operations, and process management using WebContainer',
+      type: 'server-app-worker',
+      id: 'webcontainer-compiler-worker',
+      name: 'WebContainer Compiler Worker',
+      description: 'Web-based compilation service using WebContainer. Provides NodeJS environment running in the browser, supports npm packages, build tools, and can compile/bundle JavaScript/TypeScript projects entirely client-side.',
+      supported_types: ['webcontainer-app'],
       config: {
         visibility: 'public',
-        require_context: false
+        require_context: true
       },
       
-      // Original compilation functions
-      loadArtifact: loadArtifact,
-      spawn: spawn,
-      publishArtifact: publishArtifact,
+      // Required worker methods
+      start: async ({ config = {} } = {}, context = null) => {
+        const sessionId = `session_${++sessionCounter}_${Date.now()}`;
+        
+        try {
+          // Create session info
+          sessions.set(sessionId, {
+            id: sessionId,
+            status: 'running',
+            startTime: new Date().toISOString(),
+            config: config,
+            workdir: config.workdir || '/',
+            processes: new Map()
+          });
+          
+          addSessionLog(sessionId, 'info', `Session started with config: ${JSON.stringify(config)}`);
+          
+          // Load initial artifact if specified
+          if (config.artifactId) {
+            await loadArtifact(config.artifactId, config.workdir || '/');
+            addSessionLog(sessionId, 'info', `Loaded artifact: ${config.artifactId}`);
+          }
+          
+          // Run startup script if provided
+          if (config.startup_script) {
+            const result = await spawn('sh', ['-c', config.startup_script]);
+            addSessionLog(sessionId, 'info', `Startup script executed with exit code: ${result.exitCode}`);
+          }
+          
+          return { session_id: sessionId, status: 'running' };
+          
+        } catch (error) {
+          addSessionLog(sessionId, 'error', `Failed to start session: ${error.message}`);
+          throw error;
+        }
+      },
       
-      // File System operations
+      stop: async ({ session_id }, context = null) => {
+        const session = sessions.get(session_id);
+        if (!session) {
+          throw new Error(`Session ${session_id} not found`);
+        }
+        
+        try {
+          // Kill all processes in this session
+          for (const [processId] of session.processes) {
+            try {
+              await killProcess(processId);
+            } catch (err) {
+              // Process might already be dead
+            }
+          }
+          
+          // Update session status
+          session.status = 'stopped';
+          session.endTime = new Date().toISOString();
+          
+          addSessionLog(session_id, 'info', 'Session stopped');
+          
+          // Clean up after a delay
+          setTimeout(() => {
+            sessions.delete(session_id);
+            sessionLogs.delete(session_id);
+          }, 60000); // Keep for 1 minute for log retrieval
+          
+          return { status: 'stopped' };
+          
+        } catch (error) {
+          addSessionLog(session_id, 'error', `Failed to stop session: ${error.message}`);
+          throw error;
+        }
+      },
+      
+      get_logs: async ({ session_id, type = null, offset = 0, limit = null } = {}, context = null) => {
+        const logs = sessionLogs.get(session_id) || [];
+        
+        let filteredLogs = logs;
+        if (type) {
+          filteredLogs = logs.filter(log => log.type === type);
+        }
+        
+        const start = offset || 0;
+        const end = limit ? start + limit : undefined;
+        
+        return {
+          logs: filteredLogs.slice(start, end),
+          total: filteredLogs.length,
+          session_id: session_id
+        };
+      },
+      
+      // Execute command in a session
+      execute: async ({ session_id, script, config = {}, progress_callback = null }, context = null) => {
+        const session = sessions.get(session_id);
+        if (!session) {
+          throw new Error(`Session ${session_id} not found`);
+        }
+        
+        addSessionLog(session_id, 'info', `Executing script: ${script.substring(0, 100)}...`);
+        
+        try {
+          // Parse the script to determine command and args
+          const parts = script.split(' ');
+          const command = parts[0];
+          const args = parts.slice(1);
+          
+          // Execute the command
+          const result = await spawn(command, args);
+          
+          if (progress_callback) {
+            await progress_callback({
+              type: 'output',
+              data: result.output
+            });
+          }
+          
+          addSessionLog(session_id, 'info', `Script executed with exit code: ${result.exitCode}`);
+          
+          return {
+            output: result.output,
+            error: result.error,
+            exitCode: result.exitCode,
+            success: result.exitCode === 0
+          };
+          
+        } catch (error) {
+          addSessionLog(session_id, 'error', `Execution failed: ${error.message}`);
+          throw error;
+        }
+      },
+      
+      // Original compilation functions with destructuring
+      loadArtifact: async ({ artifactId, srcDir }, context = null) => {
+        return await loadArtifact(artifactId, srcDir);
+      },
+      
+      spawn: async ({ command, args = [] }, context = null) => {
+        return await spawn(command, args);
+      },
+      
+      publishArtifact: async ({ srcDir, artifactId, targetDir }, context = null) => {
+        return await publishArtifact(srcDir, artifactId, targetDir);
+      },
+      
+      // File System operations with destructuring
       fs: {
-        mkdir: fs_mkdir,
-        readdir: fs_readdir,
-        readFile: fs_readFile,
-        writeFile: fs_writeFile,
-        rm: fs_rm,
-        rename: fs_rename
+        mkdir: async ({ path, options = {} }, context = null) => {
+          return await fs_mkdir(path, options);
+        },
+        readdir: async ({ path, options = {} }, context = null) => {
+          return await fs_readdir(path, options);
+        },
+        readFile: async ({ path, encoding = 'utf-8' }, context = null) => {
+          return await fs_readFile(path, encoding);
+        },
+        writeFile: async ({ path, data, options = {} }, context = null) => {
+          return await fs_writeFile(path, data, options);
+        },
+        rm: async ({ path, options = {} }, context = null) => {
+          return await fs_rm(path, options);
+        },
+        rename: async ({ oldPath, newPath }, context = null) => {
+          return await fs_rename(oldPath, newPath);
+        }
       },
       
-      // Mount and export
-      mount: mount,
-      export: exportFS,
+      // Mount and export with destructuring
+      mount: async ({ tree, options = {} }, context = null) => {
+        return await mount(tree, options);
+      },
       
-      // Process management
-      spawnProcess: spawnWithTracking,
-      killProcess: killProcess,
-      listProcesses: listProcesses,
+      exportFS: async ({ path = '/', options = {} }, context = null) => {
+        return await exportFS(path, options);
+      },
+      
+      // Process management with destructuring
+      spawnProcess: async ({ command, args = [], options = {} }, context = null) => {
+        return await spawnWithTracking(command, args, options);
+      },
+      
+      killProcess: async ({ processId }, context = null) => {
+        return await killProcess(processId);
+      },
+      
+      listProcesses: async (context = null) => {
+        return await listProcesses();
+      },
       
       // System info
-      getInfo: getInfo,
+      getInfo: async (context = null) => {
+        return await getInfo();
+      },
     });
     
     statusEl.textContent = 'Service registered and ready!';
