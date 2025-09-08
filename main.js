@@ -1009,6 +1009,399 @@ window.addEventListener('load', async () => {
       addLog(`[${sessionId}] ${message}`);
     }
     
+    // Define schemas for all service functions
+    const schemas = {
+      start: {
+        name: "start",
+        description: "Start a new WebContainer compilation session. Creates an isolated Node.js environment that can run npm packages, build tools, and compile JavaScript/TypeScript projects.",
+        parameters: {
+          type: "object",
+          properties: {
+            workdir: {
+              type: "string",
+              description: "Working directory path (defaults to '/')",
+              default: "/"
+            },
+            artifactId: {
+              type: "string",
+              description: "ID of artifact to load at session start"
+            },
+            startup_script: {
+              type: "string",
+              description: "Shell script to execute when the session starts (e.g., npm install, setup commands)"
+            },
+            env: {
+              type: "object",
+              description: "Environment variables to set in the WebContainer",
+              additionalProperties: { type: "string" }
+            }
+          },
+          required: []
+        }
+      },
+      stop: {
+        name: "stop",
+        description: "Stop and cleanup a running WebContainer compilation session. Kills all running processes and frees resources.",
+        parameters: {
+          type: "object",
+          properties: {
+            session_id: {
+              type: "string",
+              description: "The unique identifier of the session to stop (returned from start)"
+            }
+          },
+          required: ["session_id"]
+        }
+      },
+      get_logs: {
+        name: "get_logs",
+        description: "Retrieve execution logs from a compilation session. Useful for debugging build processes and monitoring session activity.",
+        parameters: {
+          type: "object",
+          properties: {
+            session_id: {
+              type: "string",
+              description: "The unique identifier of the session"
+            },
+            type: {
+              type: "string",
+              enum: ["info", "error", "warning", null],
+              description: "Filter logs by type. If null, returns all log types",
+              nullable: true
+            },
+            offset: {
+              type: "number",
+              description: "Starting index for log retrieval (for pagination)",
+              default: 0
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of log entries to return",
+              nullable: true
+            }
+          },
+          required: ["session_id"]
+        }
+      },
+      execute: {
+        name: "execute",
+        description: "Execute a shell script/command in a WebContainer session. Supports npm commands, build tools, and any Node.js/shell operations.",
+        parameters: {
+          type: "object",
+          properties: {
+            session_id: {
+              type: "string",
+              description: "The unique identifier of the session where script will be executed"
+            },
+            script: {
+              type: "string",
+              description: "Shell script/command to execute (e.g., 'npm install', 'npm run build', 'node index.js')"
+            },
+            timeout: {
+              type: "number",
+              description: "Maximum execution time in milliseconds"
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory for command execution"
+            },
+            progress_callback: {
+              type: "object",
+              description: "Optional callback function to receive real-time execution progress",
+              nullable: true
+            }
+          },
+          required: ["session_id", "script"]
+        }
+      },
+      loadArtifact: {
+        name: "loadArtifact",
+        description: "Load files from a Hypha artifact into the WebContainer filesystem. Downloads all files from the specified artifact and writes them to the container.",
+        parameters: {
+          type: "object",
+          properties: {
+            artifactId: {
+              type: "string",
+              description: "The unique identifier of the artifact to load"
+            },
+            srcDir: {
+              type: "string",
+              description: "Target directory in WebContainer where files will be written (defaults to '/')",
+              default: "/"
+            }
+          },
+          required: ["artifactId"]
+        }
+      },
+      spawn: {
+        name: "spawn",
+        description: "Execute a command in the WebContainer and return the complete output. Simple command execution with full output capture.",
+        parameters: {
+          type: "object",
+          properties: {
+            command: {
+              type: "string",
+              description: "Command to execute (e.g., 'npm', 'node', 'ls')"
+            },
+            args: {
+              type: "array",
+              items: { type: "string" },
+              description: "Command arguments as array of strings",
+              default: []
+            }
+          },
+          required: ["command"]
+        }
+      },
+      publishArtifact: {
+        name: "publishArtifact",
+        description: "Upload files from WebContainer directory to a Hypha artifact. Creates or updates an artifact with the contents of the specified directory.",
+        parameters: {
+          type: "object",
+          properties: {
+            srcDir: {
+              type: "string",
+              description: "Source directory in WebContainer to upload (e.g., '/dist', '/build')"
+            },
+            artifactId: {
+              type: "string",
+              description: "Target artifact ID. Creates new artifact if it doesn't exist, updates if it does"
+            },
+            targetDir: {
+              type: "string",
+              description: "Target directory within the artifact (defaults to root '/')",
+              default: "/"
+            }
+          },
+          required: ["srcDir", "artifactId"]
+        }
+      },
+      fs_mkdir: {
+        name: "fs.mkdir",
+        description: "Create a directory in the WebContainer filesystem. Supports recursive directory creation.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Directory path to create"
+            },
+            recursive: {
+              type: "boolean",
+              description: "Create parent directories if they don't exist",
+              default: false
+            }
+          },
+          required: ["path"]
+        }
+      },
+      fs_readdir: {
+        name: "fs.readdir",
+        description: "List contents of a directory in the WebContainer filesystem.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Directory path to read"
+            },
+            withFileTypes: {
+              type: "boolean",
+              description: "Return detailed file type information",
+              default: false
+            }
+          },
+          required: ["path"]
+        }
+      },
+      fs_readFile: {
+        name: "fs.readFile",
+        description: "Read the contents of a file from the WebContainer filesystem.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "File path to read"
+            },
+            encoding: {
+              type: "string",
+              description: "Text encoding for the file content",
+              default: "utf-8"
+            }
+          },
+          required: ["path"]
+        }
+      },
+      fs_writeFile: {
+        name: "fs.writeFile",
+        description: "Write data to a file in the WebContainer filesystem. Creates the file if it doesn't exist, overwrites if it does.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "File path to write to"
+            },
+            data: {
+              type: "string",
+              description: "Content to write to the file"
+            },
+            encoding: {
+              type: "string",
+              description: "Text encoding for writing",
+              default: "utf-8"
+            }
+          },
+          required: ["path", "data"]
+        }
+      },
+      fs_rm: {
+        name: "fs.rm",
+        description: "Remove a file or directory from the WebContainer filesystem.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Path to remove"
+            },
+            recursive: {
+              type: "boolean",
+              description: "Remove directories and their contents recursively",
+              default: false
+            },
+            force: {
+              type: "boolean",
+              description: "Ignore nonexistent files and directories",
+              default: false
+            }
+          },
+          required: ["path"]
+        }
+      },
+      fs_rename: {
+        name: "fs.rename",
+        description: "Rename or move a file or directory in the WebContainer filesystem.",
+        parameters: {
+          type: "object",
+          properties: {
+            oldPath: {
+              type: "string",
+              description: "Current path of the file/directory"
+            },
+            newPath: {
+              type: "string",
+              description: "New path for the file/directory"
+            }
+          },
+          required: ["oldPath", "newPath"]
+        }
+      },
+      mount: {
+        name: "mount",
+        description: "Mount a file system tree into the WebContainer. Useful for loading multiple files at once from a structured tree object.",
+        parameters: {
+          type: "object",
+          properties: {
+            tree: {
+              type: "object",
+              description: "File system tree object with nested files and directories"
+            },
+            options: {
+              type: "object",
+              description: "Mount options"
+            }
+          },
+          required: ["tree"]
+        }
+      },
+      exportFS: {
+        name: "exportFS",
+        description: "Export the WebContainer filesystem or a specific directory as a structured data object. Returns JSON or binary data.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Path to export (defaults to root '/')",
+              default: "/"
+            },
+            options: {
+              type: "object",
+              description: "Export options"
+            }
+          },
+          required: []
+        }
+      },
+      spawnProcess: {
+        name: "spawnProcess",
+        description: "Spawn a tracked process in the WebContainer. Returns immediately with process ID for monitoring and control.",
+        parameters: {
+          type: "object",
+          properties: {
+            command: {
+              type: "string",
+              description: "Command to execute"
+            },
+            args: {
+              type: "array",
+              items: { type: "string" },
+              description: "Command arguments",
+              default: []
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory"
+            },
+            env: {
+              type: "object",
+              description: "Environment variables"
+            },
+            output: {
+              type: "boolean",
+              description: "Whether to capture output",
+              default: true
+            }
+          },
+          required: ["command"]
+        }
+      },
+      killProcess: {
+        name: "killProcess",
+        description: "Kill a running process by its process ID. Terminates the process and cleans up resources.",
+        parameters: {
+          type: "object",
+          properties: {
+            processId: {
+              type: "string",
+              description: "The unique identifier of the process to kill (returned from spawnProcess)"
+            }
+          },
+          required: ["processId"]
+        }
+      },
+      listProcesses: {
+        name: "listProcesses",
+        description: "List all currently running processes in the WebContainer. Returns process information including IDs, commands, and start times.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: []
+        }
+      },
+      getInfo: {
+        name: "getInfo",
+        description: "Get information about the WebContainer system, including status, capabilities, and resource usage.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: []
+        }
+      }
+    };
+
     // Register the WebContainer worker service
     const service = await server.registerService({
       type: 'server-app-worker',
@@ -1017,48 +1410,49 @@ window.addEventListener('load', async () => {
       description: 'Web-based compilation service using WebContainer. Provides NodeJS environment running in the browser, supports npm packages, build tools, and can compile/bundle JavaScript/TypeScript projects entirely client-side.',
       supported_types: ['webcontainer-app'],
       config: {
-        visibility: 'public',
+        visibility: 'protected',
         require_context: true
       },
       
       // Required worker methods
-      start: async ({ config = {} } = {}, context = null) => {
+      start: Object.assign(async ({ workdir = '/', artifactId, startup_script, env } = {}, context = null) => {
         const sessionId = `session_${++sessionCounter}_${Date.now()}`;
         
         try {
           // Create session info
+          const config = { workdir, artifactId, startup_script, env };
           sessions.set(sessionId, {
             id: sessionId,
             status: 'running',
             startTime: new Date().toISOString(),
             config: config,
-            workdir: config.workdir || '/',
+            workdir: workdir,
             processes: new Map()
           });
           
           addSessionLog(sessionId, 'info', `Session started with config: ${JSON.stringify(config)}`);
           
           // Load initial artifact if specified
-          if (config.artifactId) {
-            await loadArtifact(config.artifactId, config.workdir || '/');
-            addSessionLog(sessionId, 'info', `Loaded artifact: ${config.artifactId}`);
+          if (artifactId) {
+            await loadArtifact(artifactId, workdir);
+            addSessionLog(sessionId, 'info', `Loaded artifact: ${artifactId}`);
           }
           
           // Run startup script if provided
-          if (config.startup_script) {
-            const result = await spawn('sh', ['-c', config.startup_script]);
+          if (startup_script) {
+            const result = await spawn('sh', ['-c', startup_script]);
             addSessionLog(sessionId, 'info', `Startup script executed with exit code: ${result.exitCode}`);
           }
           
-          return { session_id: sessionId, status: 'running' };
-          
-        } catch (error) {
-          addSessionLog(sessionId, 'error', `Failed to start session: ${error.message}`);
-          throw error;
-        }
-      },
+        return { session_id: sessionId, status: 'running' };
+        
+      } catch (error) {
+        addSessionLog(sessionId, 'error', `Failed to start session: ${error.message}`);
+        throw error;
+      }
+    }, { __schema__: schemas.start }),
       
-      stop: async ({ session_id }, context = null) => {
+      stop: Object.assign(async ({ session_id }, context = null) => {
         const session = sessions.get(session_id);
         if (!session) {
           throw new Error(`Session ${session_id} not found`);
@@ -1086,15 +1480,15 @@ window.addEventListener('load', async () => {
             sessionLogs.delete(session_id);
           }, 60000); // Keep for 1 minute for log retrieval
           
-          return { status: 'stopped' };
-          
-        } catch (error) {
-          addSessionLog(session_id, 'error', `Failed to stop session: ${error.message}`);
-          throw error;
-        }
-      },
+        return { status: 'stopped' };
+        
+      } catch (error) {
+        addSessionLog(session_id, 'error', `Failed to stop session: ${error.message}`);
+        throw error;
+      }
+    }, { __schema__: schemas.stop }),
       
-      get_logs: async ({ session_id, type = null, offset = 0, limit = null } = {}, context = null) => {
+      get_logs: Object.assign(async ({ session_id, type = null, offset = 0, limit = null } = {}, context = null) => {
         const logs = sessionLogs.get(session_id) || [];
         
         let filteredLogs = logs;
@@ -1110,10 +1504,10 @@ window.addEventListener('load', async () => {
           total: filteredLogs.length,
           session_id: session_id
         };
-      },
+      }, { __schema__: schemas.get_logs }),
       
       // Execute command in a session
-      execute: async ({ session_id, script, config = {}, progress_callback = null }, context = null) => {
+      execute: Object.assign(async ({ session_id, script, timeout, cwd, progress_callback = null }, context = null) => {
         const session = sessions.get(session_id);
         if (!session) {
           throw new Error(`Session ${session_id} not found`);
@@ -1127,7 +1521,7 @@ window.addEventListener('load', async () => {
           const command = parts[0];
           const args = parts.slice(1);
           
-          // Execute the command
+          // Execute the command with config options
           const result = await spawn(command, args);
           
           if (progress_callback) {
@@ -1150,69 +1544,69 @@ window.addEventListener('load', async () => {
           addSessionLog(session_id, 'error', `Execution failed: ${error.message}`);
           throw error;
         }
-      },
+      }, { __schema__: schemas.execute }),
       
       // Original compilation functions with destructuring
-      loadArtifact: async ({ artifactId, srcDir }, context = null) => {
+      loadArtifact: Object.assign(async ({ artifactId, srcDir }, context = null) => {
         return await loadArtifact(artifactId, srcDir);
-      },
+      }, { __schema__: schemas.loadArtifact }),
       
-      spawn: async ({ command, args = [] }, context = null) => {
+      spawn: Object.assign(async ({ command, args = [] }, context = null) => {
         return await spawn(command, args);
-      },
+      }, { __schema__: schemas.spawn }),
       
-      publishArtifact: async ({ srcDir, artifactId, targetDir }, context = null) => {
+      publishArtifact: Object.assign(async ({ srcDir, artifactId, targetDir }, context = null) => {
         return await publishArtifact(srcDir, artifactId, targetDir);
-      },
+      }, { __schema__: schemas.publishArtifact }),
       
       // File System operations with destructuring
       fs: {
-        mkdir: async ({ path, options = {} }, context = null) => {
-          return await fs_mkdir(path, options);
-        },
-        readdir: async ({ path, options = {} }, context = null) => {
-          return await fs_readdir(path, options);
-        },
-        readFile: async ({ path, encoding = 'utf-8' }, context = null) => {
+        mkdir: Object.assign(async ({ path, recursive = false }, context = null) => {
+          return await fs_mkdir(path, { recursive });
+        }, { __schema__: schemas.fs_mkdir }),
+        readdir: Object.assign(async ({ path, withFileTypes = false }, context = null) => {
+          return await fs_readdir(path, { withFileTypes });
+        }, { __schema__: schemas.fs_readdir }),
+        readFile: Object.assign(async ({ path, encoding = 'utf-8' }, context = null) => {
           return await fs_readFile(path, encoding);
-        },
-        writeFile: async ({ path, data, options = {} }, context = null) => {
-          return await fs_writeFile(path, data, options);
-        },
-        rm: async ({ path, options = {} }, context = null) => {
-          return await fs_rm(path, options);
-        },
-        rename: async ({ oldPath, newPath }, context = null) => {
+        }, { __schema__: schemas.fs_readFile }),
+        writeFile: Object.assign(async ({ path, data, encoding = 'utf-8' }, context = null) => {
+          return await fs_writeFile(path, data, { encoding });
+        }, { __schema__: schemas.fs_writeFile }),
+        rm: Object.assign(async ({ path, recursive = false, force = false }, context = null) => {
+          return await fs_rm(path, { recursive, force });
+        }, { __schema__: schemas.fs_rm }),
+        rename: Object.assign(async ({ oldPath, newPath }, context = null) => {
           return await fs_rename(oldPath, newPath);
-        }
+        }, { __schema__: schemas.fs_rename })
       },
       
       // Mount and export with destructuring
-      mount: async ({ tree, options = {} }, context = null) => {
+      mount: Object.assign(async ({ tree, options = {} }, context = null) => {
         return await mount(tree, options);
-      },
+      }, { __schema__: schemas.mount }),
       
-      exportFS: async ({ path = '/', options = {} }, context = null) => {
+      exportFS: Object.assign(async ({ path = '/', options = {} }, context = null) => {
         return await exportFS(path, options);
-      },
+      }, { __schema__: schemas.exportFS }),
       
       // Process management with destructuring
-      spawnProcess: async ({ command, args = [], options = {} }, context = null) => {
-        return await spawnWithTracking(command, args, options);
-      },
+      spawnProcess: Object.assign(async ({ command, args = [], cwd, env, output = true }, context = null) => {
+        return await spawnWithTracking(command, args, { cwd, env, output });
+      }, { __schema__: schemas.spawnProcess }),
       
-      killProcess: async ({ processId }, context = null) => {
+      killProcess: Object.assign(async ({ processId }, context = null) => {
         return await killProcess(processId);
-      },
+      }, { __schema__: schemas.killProcess }),
       
-      listProcesses: async (context = null) => {
+      listProcesses: Object.assign(async (context = null) => {
         return await listProcesses();
-      },
+      }, { __schema__: schemas.listProcesses }),
       
       // System info
-      getInfo: async (context = null) => {
+      getInfo: Object.assign(async (context = null) => {
         return await getInfo();
-      },
+      }, { __schema__: schemas.getInfo }),
     });
     
     statusEl.textContent = 'Service registered and ready!';
