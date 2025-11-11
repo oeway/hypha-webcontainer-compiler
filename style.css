@@ -334,3 +334,247 @@ body {
   width: 100%;
   height: 100%;
 }
+
+/* File Editor */
+.file-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #252526;
+  border-bottom: 1px solid #3e3e42;
+  align-items: center;
+}
+
+.editor-toolbar button {
+  background: #0e639c;
+  color: white;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.editor-toolbar button:hover:not(:disabled) {
+  background: #1177bb;
+}
+
+.editor-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.editor-toolbar button.success {
+  background: #16825d;
+}
+
+.editor-toolbar button.success:hover:not(:disabled) {
+  background: #1a9d6e;
+}
+
+.editor-textarea {
+  flex: 1;
+  background: #1e1e1e;
+  color: #cccccc;
+  border: none;
+  padding: 15px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+}
+
+.editor-textarea:focus {
+  background: #1e1e1e;
+}
+
+/* File Actions */
+.file-actions {
+  display: flex;
+  gap: 5px;
+  padding: 5px 10px;
+  background: #252526;
+  border-bottom: 1px solid #3e3e42;
+}
+
+.file-actions button {
+  background: #3e3e42;
+  color: #cccccc;
+  border: none;
+  padding: 5px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.file-actions button:hover {
+  background: #505050;
+}
+
+.file-actions button.danger:hover {
+  background: #c72e2e;
+  color: white;
+}
+
+/* Context Menu for file tree items */
+.tree-item {
+  position: relative;
+}
+
+.tree-item-actions {
+  display: none;
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  gap: 3px;
+}
+
+.tree-item:hover .tree-item-actions {
+  display: flex;
+}
+
+.tree-item-actions button {
+  background: #3e3e42;
+  color: #cccccc;
+  border: none;
+  padding: 2px 5px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 10px;
+  transition: background 0.2s;
+}
+
+.tree-item-actions button:hover {
+  background: #505050;
+}
+
+/* Modal/Dialog */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: #2d2d30;
+  border: 1px solid #3e3e42;
+  border-radius: 6px;
+  padding: 20px;
+  min-width: 400px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.modal h3 {
+  margin: 0 0 15px 0;
+  color: #cccccc;
+  font-size: 16px;
+}
+
+.modal-content {
+  margin-bottom: 20px;
+}
+
+.modal-content label {
+  display: block;
+  margin-bottom: 5px;
+  color: #8b8b8b;
+  font-size: 12px;
+}
+
+.modal-content input {
+  width: 100%;
+  padding: 8px;
+  background: #1e1e1e;
+  border: 1px solid #3e3e42;
+  border-radius: 3px;
+  color: #cccccc;
+  font-size: 13px;
+}
+
+.modal-content input:focus {
+  outline: none;
+  border-color: #0e639c;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.modal-actions button {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+
+.modal-actions button.primary {
+  background: #0e639c;
+  color: white;
+}
+
+.modal-actions button.primary:hover {
+  background: #1177bb;
+}
+
+.modal-actions button.secondary {
+  background: #3e3e42;
+  color: #cccccc;
+}
+
+.modal-actions button.secondary:hover {
+  background: #505050;
+}
+
+.modal-actions button.danger {
+  background: #c72e2e;
+  color: white;
+}
+
+.modal-actions button.danger:hover {
+  background: #e13a3a;
+}
+
+/* Editor Status */
+.editor-status {
+  padding: 4px 10px;
+  background: #252526;
+  border-top: 1px solid #3e3e42;
+  font-size: 11px;
+  color: #8b8b8b;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.editor-status.modified {
+  color: #f0ad4e;
+}
+
+.editor-status.saved {
+  color: #5cb85c;
+}

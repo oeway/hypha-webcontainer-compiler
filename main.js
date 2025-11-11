@@ -110,6 +110,11 @@ window.addEventListener('load', async () => {
             File Explorer
             <button class="refresh-btn" id="refresh-tree" title="Refresh file tree">🔄</button>
           </div>
+          <div class="file-actions">
+            <button id="new-file-btn" title="New File">📄 New File</button>
+            <button id="new-folder-btn" title="New Folder">📁 New Folder</button>
+            <button id="import-artifact-btn" title="Import from Artifact">📦 Import Artifact</button>
+          </div>
           <div class="file-tree" id="file-tree">
             <div class="empty-state">
               <div class="icon">📁</div>
@@ -123,7 +128,7 @@ window.addEventListener('load', async () => {
           <div class="tabs">
             <button class="tab active" data-tab="logs">Console Logs</button>
             <button class="tab" data-tab="terminal">Terminal</button>
-            <button class="tab" data-tab="file">File Viewer</button>
+            <button class="tab" data-tab="file">File Editor</button>
             <button class="tab" data-tab="preview">Preview</button>
           </div>
           
@@ -139,9 +144,17 @@ window.addEventListener('load', async () => {
           </div>
           
           <div class="tab-content" id="file-tab">
-            <div class="file-viewer">
-              <div id="file-info" class="file-info">Select a file from the explorer to view its contents</div>
-              <div id="file-content" class="file-content"></div>
+            <div class="file-editor">
+              <div class="editor-toolbar">
+                <button id="save-file-btn" disabled>💾 Save</button>
+                <button id="save-as-btn" disabled>💾 Save As...</button>
+                <span id="file-path-display" style="flex: 1; margin-left: 10px; font-size: 11px; color: #8b8b8b;"></span>
+              </div>
+              <textarea id="file-editor-textarea" class="editor-textarea" placeholder="Select a file to edit or create a new file..."></textarea>
+              <div id="editor-status" class="editor-status">
+                <span id="editor-status-text">No file opened</span>
+                <span id="editor-info"></span>
+              </div>
             </div>
           </div>
           
@@ -161,10 +174,16 @@ window.addEventListener('load', async () => {
   const statusEl = document.getElementById('status-message');
   const logsEl = document.getElementById('logs');
   const fileTreeEl = document.getElementById('file-tree');
-  const fileContentEl = document.getElementById('file-content');
-  const fileInfoEl = document.getElementById('file-info');
-  
+  const editorTextarea = document.getElementById('file-editor-textarea');
+  const saveFileBtn = document.getElementById('save-file-btn');
+  const saveAsBtn = document.getElementById('save-as-btn');
+  const filePathDisplay = document.getElementById('file-path-display');
+  const editorStatusText = document.getElementById('editor-status-text');
+  const editorInfo = document.getElementById('editor-info');
+
   let currentFilePath = null;
+  let originalContent = '';
+  let isModified = false;
   
   function addLog(message) {
     logsEl.textContent += message + '\n';
@@ -179,7 +198,7 @@ window.addEventListener('load', async () => {
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       tab.classList.add('active');
       document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
-      
+
       // Resize terminal when terminal tab is activated
       if (tab.dataset.tab === 'terminal' && fitAddon) {
         setTimeout(() => {
@@ -188,6 +207,472 @@ window.addEventListener('load', async () => {
       }
     });
   });
+
+  // Modal helper functions
+  function showModal(title, content, actions) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3>${title}</h3>
+        <div class="modal-content">${content}</div>
+        <div class="modal-actions">${actions}</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        document.body.removeChild(overlay);
+      }
+    });
+
+    return overlay;
+  }
+
+  // File editor functions
+  function updateEditorStatus() {
+    if (!currentFilePath) {
+      editorStatusText.textContent = 'No file opened';
+      filePathDisplay.textContent = '';
+      saveFileBtn.disabled = true;
+      saveAsBtn.disabled = true;
+      return;
+    }
+
+    const content = editorTextarea.value;
+    isModified = content !== originalContent;
+
+    if (isModified) {
+      editorStatusText.textContent = '● Modified';
+      editorStatusText.className = 'modified';
+      saveFileBtn.disabled = false;
+      saveFileBtn.className = '';
+    } else {
+      editorStatusText.textContent = '✓ Saved';
+      editorStatusText.className = 'saved';
+      saveFileBtn.disabled = true;
+      saveFileBtn.className = 'success';
+    }
+
+    saveAsBtn.disabled = false;
+    filePathDisplay.textContent = currentFilePath;
+
+    const lines = content.split('\n').length;
+    const chars = content.length;
+    editorInfo.textContent = `Lines: ${lines} | Characters: ${chars}`;
+  }
+
+  async function openFileInEditor(path) {
+    try {
+      const content = await webcontainerInstance.fs.readFile(path, 'utf-8');
+      currentFilePath = path;
+      originalContent = content;
+      editorTextarea.value = content;
+      updateEditorStatus();
+      addLog(`📄 Opened file: ${path}`);
+    } catch (error) {
+      addLog(`✗ Error opening file: ${error.message}`);
+      alert(`Failed to open file: ${error.message}`);
+    }
+  }
+
+  async function saveCurrentFile() {
+    if (!currentFilePath) return;
+
+    try {
+      const content = editorTextarea.value;
+      await webcontainerInstance.fs.writeFile(currentFilePath, content);
+      originalContent = content;
+      updateEditorStatus();
+      addLog(`💾 Saved file: ${currentFilePath}`);
+      await window.refreshFileTree();
+    } catch (error) {
+      addLog(`✗ Error saving file: ${error.message}`);
+      alert(`Failed to save file: ${error.message}`);
+    }
+  }
+
+  async function saveFileAs() {
+    const defaultPath = currentFilePath ? currentFilePath.substring(1) : 'newfile.txt';
+    const modal = showModal(
+      'Save File As',
+      `<label>File path (e.g., docs/README.md or /docs/README.md for absolute path):</label>
+       <input type="text" id="save-as-path" value="${defaultPath}" />`,
+      `<button class="secondary" id="cancel-save-as">Cancel</button>
+       <button class="primary" id="confirm-save-as">Save</button>`
+    );
+
+    const input = document.getElementById('save-as-path');
+    input.focus();
+    input.select();
+
+    document.getElementById('cancel-save-as').onclick = () => {
+      document.body.removeChild(modal);
+    };
+
+    document.getElementById('confirm-save-as').onclick = async () => {
+      let newPath = input.value.trim();
+      if (!newPath) {
+        alert('Please enter a file path');
+        return;
+      }
+
+      // If path doesn't start with /, treat as relative and add /
+      if (!newPath.startsWith('/')) {
+        newPath = '/' + newPath;
+      }
+
+      try {
+        const content = editorTextarea.value;
+
+        // Create directory if needed
+        const dir = newPath.substring(0, newPath.lastIndexOf('/'));
+        if (dir && dir !== '') {
+          await webcontainerInstance.fs.mkdir(dir, { recursive: true });
+        }
+
+        await webcontainerInstance.fs.writeFile(newPath, content);
+        currentFilePath = newPath;
+        originalContent = content;
+        updateEditorStatus();
+        addLog(`💾 Saved file as: ${newPath}`);
+        await window.refreshFileTree();
+        document.body.removeChild(modal);
+      } catch (error) {
+        addLog(`✗ Error saving file: ${error.message}`);
+        alert(`Failed to save file: ${error.message}`);
+      }
+    };
+
+    // Allow Enter key to confirm
+    input.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('confirm-save-as').click();
+      }
+    });
+  }
+
+  async function createNewFile() {
+    const modal = showModal(
+      'Create New File',
+      `<label>File path (e.g., docs/README.md or /docs/README.md for absolute path):</label>
+       <input type="text" id="new-file-path" placeholder="newfile.txt" />`,
+      `<button class="secondary" id="cancel-new-file">Cancel</button>
+       <button class="primary" id="confirm-new-file">Create</button>`
+    );
+
+    const input = document.getElementById('new-file-path');
+    input.focus();
+
+    document.getElementById('cancel-new-file').onclick = () => {
+      document.body.removeChild(modal);
+    };
+
+    document.getElementById('confirm-new-file').onclick = async () => {
+      let filePath = input.value.trim();
+      if (!filePath) {
+        alert('Please enter a file path');
+        return;
+      }
+
+      // If path doesn't start with /, treat as relative and add /
+      if (!filePath.startsWith('/')) {
+        filePath = '/' + filePath;
+      }
+
+      try {
+        // Create directory if needed
+        const dir = filePath.substring(0, filePath.lastIndexOf('/'));
+        if (dir && dir !== '') {
+          await webcontainerInstance.fs.mkdir(dir, { recursive: true });
+        }
+
+        await webcontainerInstance.fs.writeFile(filePath, '');
+        addLog(`✓ Created file: ${filePath}`);
+        await window.refreshFileTree();
+        document.body.removeChild(modal);
+
+        // Open the new file in editor
+        await openFileInEditor(filePath);
+        document.querySelector('[data-tab="file"]').click();
+      } catch (error) {
+        addLog(`✗ Error creating file: ${error.message}`);
+        alert(`Failed to create file: ${error.message}`);
+      }
+    };
+
+    input.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('confirm-new-file').click();
+      }
+    });
+  }
+
+  async function createNewFolder() {
+    const modal = showModal(
+      'Create New Folder',
+      `<label>Folder path (e.g., docs/images or /docs/images for absolute path):</label>
+       <input type="text" id="new-folder-path" placeholder="newfolder" />`,
+      `<button class="secondary" id="cancel-new-folder">Cancel</button>
+       <button class="primary" id="confirm-new-folder">Create</button>`
+    );
+
+    const input = document.getElementById('new-folder-path');
+    input.focus();
+
+    document.getElementById('cancel-new-folder').onclick = () => {
+      document.body.removeChild(modal);
+    };
+
+    document.getElementById('confirm-new-folder').onclick = async () => {
+      let folderPath = input.value.trim();
+      if (!folderPath) {
+        alert('Please enter a folder path');
+        return;
+      }
+
+      // If path doesn't start with /, treat as relative and add /
+      if (!folderPath.startsWith('/')) {
+        folderPath = '/' + folderPath;
+      }
+
+      try {
+        await webcontainerInstance.fs.mkdir(folderPath, { recursive: true });
+        addLog(`✓ Created folder: ${folderPath}`);
+        await window.refreshFileTree();
+        document.body.removeChild(modal);
+      } catch (error) {
+        addLog(`✗ Error creating folder: ${error.message}`);
+        alert(`Failed to create folder: ${error.message}`);
+      }
+    };
+
+    input.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('confirm-new-folder').click();
+      }
+    });
+  }
+
+  async function renameFile(oldPath) {
+    const fileName = oldPath.split('/').pop();
+    const relativePath = oldPath.substring(1); // Remove leading /
+    const modal = showModal(
+      'Rename',
+      `<label>New path for "${fileName}" (e.g., newname.txt or /docs/newname.txt for absolute):</label>
+       <input type="text" id="rename-path" value="${relativePath}" />`,
+      `<button class="secondary" id="cancel-rename">Cancel</button>
+       <button class="primary" id="confirm-rename">Rename</button>`
+    );
+
+    const input = document.getElementById('rename-path');
+    input.focus();
+    input.select();
+
+    document.getElementById('cancel-rename').onclick = () => {
+      document.body.removeChild(modal);
+    };
+
+    document.getElementById('confirm-rename').onclick = async () => {
+      let newPath = input.value.trim();
+      if (!newPath) {
+        alert('Please enter a path');
+        return;
+      }
+
+      // If path doesn't start with /, treat as relative and add /
+      if (!newPath.startsWith('/')) {
+        newPath = '/' + newPath;
+      }
+
+      if (newPath === oldPath) {
+        document.body.removeChild(modal);
+        return;
+      }
+
+      try {
+        // Create parent directory if needed
+        const dir = newPath.substring(0, newPath.lastIndexOf('/'));
+        if (dir && dir !== '') {
+          await webcontainerInstance.fs.mkdir(dir, { recursive: true });
+        }
+
+        await webcontainerInstance.fs.rename(oldPath, newPath);
+        addLog(`📝 Renamed: ${oldPath} → ${newPath}`);
+
+        // Update editor if the renamed file is currently open
+        if (currentFilePath === oldPath) {
+          currentFilePath = newPath;
+          updateEditorStatus();
+        }
+
+        await window.refreshFileTree();
+        document.body.removeChild(modal);
+      } catch (error) {
+        addLog(`✗ Error renaming: ${error.message}`);
+        alert(`Failed to rename: ${error.message}`);
+      }
+    };
+
+    input.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('confirm-rename').click();
+      }
+    });
+  }
+
+  async function deleteFile(path) {
+    const fileName = path.split('/').pop();
+    const modal = showModal(
+      'Delete',
+      `<p>Are you sure you want to delete "${fileName}"?</p>
+       <p style="color: #f0ad4e; font-size: 12px;">This action cannot be undone.</p>`,
+      `<button class="secondary" id="cancel-delete">Cancel</button>
+       <button class="danger" id="confirm-delete">Delete</button>`
+    );
+
+    document.getElementById('cancel-delete').onclick = () => {
+      document.body.removeChild(modal);
+    };
+
+    document.getElementById('confirm-delete').onclick = async () => {
+      try {
+        // Check if it's a directory
+        let isDirectory = false;
+        try {
+          const entries = await webcontainerInstance.fs.readdir(path);
+          isDirectory = true;
+        } catch (e) {
+          // Not a directory or doesn't exist
+        }
+
+        if (isDirectory) {
+          await webcontainerInstance.fs.rm(path, { recursive: true, force: true });
+        } else {
+          await webcontainerInstance.fs.rm(path);
+        }
+
+        addLog(`🗑️ Deleted: ${path}`);
+
+        // Clear editor if the deleted file is currently open
+        if (currentFilePath === path) {
+          currentFilePath = null;
+          originalContent = '';
+          editorTextarea.value = '';
+          updateEditorStatus();
+        }
+
+        await window.refreshFileTree();
+        document.body.removeChild(modal);
+      } catch (error) {
+        addLog(`✗ Error deleting: ${error.message}`);
+        alert(`Failed to delete: ${error.message}`);
+      }
+    };
+  }
+
+  async function importFromArtifact() {
+    const modal = showModal(
+      'Import from Artifact',
+      `<label>Artifact ID:</label>
+       <input type="text" id="artifact-id-input" placeholder="Enter artifact ID (e.g., artifact_abc123)" />
+       <div style="margin-top: 10px;">
+         <label>Import to directory (optional):</label>
+         <input type="text" id="artifact-dir-input" placeholder="Leave empty for root or specify: src/components" />
+       </div>`,
+      `<button class="secondary" id="cancel-import">Cancel</button>
+       <button class="primary" id="confirm-import">Import</button>`
+    );
+
+    const artifactIdInput = document.getElementById('artifact-id-input');
+    const artifactDirInput = document.getElementById('artifact-dir-input');
+    artifactIdInput.focus();
+
+    document.getElementById('cancel-import').onclick = () => {
+      document.body.removeChild(modal);
+    };
+
+    document.getElementById('confirm-import').onclick = async () => {
+      const artifactId = artifactIdInput.value.trim();
+      if (!artifactId) {
+        alert('Please enter an artifact ID');
+        return;
+      }
+
+      let targetDir = artifactDirInput.value.trim();
+      // If path doesn't start with /, treat as relative and add /
+      if (targetDir && !targetDir.startsWith('/')) {
+        targetDir = '/' + targetDir;
+      }
+
+      try {
+        // Disable the button to prevent double-clicks
+        const confirmBtn = document.getElementById('confirm-import');
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Importing...';
+
+        addLog(`📦 Importing artifact: ${artifactId}${targetDir ? ' to ' + targetDir : ''}`);
+
+        // Call the loadArtifact function which should be available in the scope
+        if (typeof window.loadArtifact === 'function') {
+          await window.loadArtifact(artifactId, targetDir);
+          addLog(`✓ Successfully imported artifact: ${artifactId}`);
+          await window.refreshFileTree();
+          document.body.removeChild(modal);
+        } else {
+          addLog(`✗ Artifact loading not available. Please connect to Hypha server first.`);
+          alert('Artifact loading is not available. Please connect to the Hypha server first by clicking the "Connect & Load Artifact" button.');
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Import';
+        }
+      } catch (error) {
+        addLog(`✗ Error importing artifact: ${error.message}`);
+        alert(`Failed to import artifact: ${error.message}`);
+        const confirmBtn = document.getElementById('confirm-import');
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Import';
+        }
+      }
+    };
+
+    // Allow Enter key to confirm
+    artifactIdInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('confirm-import').click();
+      }
+    });
+
+    artifactDirInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('confirm-import').click();
+      }
+    });
+  }
+
+  // Event listeners for editor
+  editorTextarea.addEventListener('input', updateEditorStatus);
+
+  saveFileBtn.addEventListener('click', saveCurrentFile);
+  saveAsBtn.addEventListener('click', saveFileAs);
+
+  // Keyboard shortcuts
+  editorTextarea.addEventListener('keydown', (e) => {
+    // Ctrl+S or Cmd+S to save
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      if (currentFilePath && isModified) {
+        saveCurrentFile();
+      }
+    }
+  });
+
+  // New file/folder buttons
+  document.getElementById('new-file-btn').addEventListener('click', createNewFile);
+  document.getElementById('new-folder-btn').addEventListener('click', createNewFolder);
+  document.getElementById('import-artifact-btn').addEventListener('click', importFromArtifact);
   
   // File tree functions - make it globally accessible
   window.refreshFileTree = async function refreshFileTree() {
@@ -245,20 +730,24 @@ window.addEventListener('load', async () => {
   
   function renderFileTree(tree, parentPath, level = 0) {
     let html = '';
-    
+
     // Sort entries: directories first, then files
     const entries = Object.entries(tree).sort(([aName, aVal], [bName, bVal]) => {
       if (aVal.type === 'directory' && bVal.type === 'file') return -1;
       if (aVal.type === 'file' && bVal.type === 'directory') return 1;
       return aName.localeCompare(bName);
     });
-    
+
     for (const [name, item] of entries) {
       if (item.type === 'directory') {
         html += `
           <div class="tree-item directory" data-path="${item.path}">
             <span class="icon">📁</span>
             <span>${name}</span>
+            <div class="tree-item-actions">
+              <button class="rename-btn" data-path="${item.path}" title="Rename">✏️</button>
+              <button class="delete-btn" data-path="${item.path}" title="Delete">🗑️</button>
+            </div>
           </div>
           <div class="tree-children">
             ${renderFileTree(item.children, item.path, level + 1)}
@@ -270,11 +759,15 @@ window.addEventListener('load', async () => {
           <div class="tree-item file" data-path="${item.path}">
             <span class="icon">${icon}</span>
             <span>${name}</span>
+            <div class="tree-item-actions">
+              <button class="rename-btn" data-path="${item.path}" title="Rename">✏️</button>
+              <button class="delete-btn" data-path="${item.path}" title="Delete">🗑️</button>
+            </div>
           </div>
         `;
       }
     }
-    
+
     return html;
   }
   
@@ -305,68 +798,58 @@ window.addEventListener('load', async () => {
   }
   
   function attachFileTreeEvents() {
+    // File click handler - open in editor
     document.querySelectorAll('.tree-item.file').forEach(item => {
-      item.addEventListener('click', async () => {
+      item.addEventListener('click', async (e) => {
+        // Don't trigger if clicking on action buttons
+        if (e.target.closest('.tree-item-actions')) {
+          return;
+        }
+
         // Remove previous selection
         document.querySelectorAll('.tree-item').forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
-        
+
         const path = item.dataset.path;
-        await loadFileContent(path);
-        
-        // Switch to file viewer tab
+        await openFileInEditor(path);
+
+        // Switch to file editor tab
         document.querySelector('[data-tab="file"]').click();
       });
     });
-    
-    // Toggle directory expansion (simplified - you could add collapse/expand)
+
+    // Directory click handler - toggle expansion
     document.querySelectorAll('.tree-item.directory').forEach(item => {
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (e) => {
+        // Don't trigger if clicking on action buttons
+        if (e.target.closest('.tree-item-actions')) {
+          return;
+        }
+
         const children = item.nextElementSibling;
         if (children && children.classList.contains('tree-children')) {
           children.style.display = children.style.display === 'none' ? 'block' : 'none';
         }
       });
     });
-  }
-  
-  async function loadFileContent(path) {
-    currentFilePath = path;
-    fileInfoEl.textContent = `Loading: ${path}...`;
-    fileContentEl.textContent = '';
-    
-    try {
-      const content = await webcontainerInstance.fs.readFile(path, 'utf-8');
-      const stats = { size: content.length };
-      
-      fileInfoEl.innerHTML = `
-        <strong>File:</strong> ${path}<br>
-        <strong>Size:</strong> ${formatFileSize(stats.size)}
-      `;
-      
-      // Display content with basic syntax highlighting for code files
-      if (isTextFile(path)) {
-        fileContentEl.textContent = content;
-      } else {
-        fileContentEl.innerHTML = '<em>Binary file - cannot display content</em>';
-      }
-    } catch (error) {
-      fileInfoEl.textContent = `Error loading file: ${path}`;
-      fileContentEl.innerHTML = `<span style="color: #ff6b6b;">Error: ${error.message}</span>`;
-    }
-  }
-  
-  function isTextFile(path) {
-    const textExtensions = ['.js', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.yml', '.yaml', '.xml', '.env', '.sh', '.log'];
-    return textExtensions.some(ext => path.toLowerCase().endsWith(ext));
-  }
-  
-  function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+
+    // Rename button handlers
+    document.querySelectorAll('.rename-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const path = btn.dataset.path;
+        await renameFile(path);
+      });
+    });
+
+    // Delete button handlers
+    document.querySelectorAll('.delete-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const path = btn.dataset.path;
+        await deleteFile(path);
+      });
+    });
   }
   
   // Refresh button
@@ -613,29 +1096,29 @@ window.addEventListener('load', async () => {
     // Define service functions
     async function loadArtifact(artifactId, srcDir) {
       addLog(`Loading artifact: ${artifactId} to ${srcDir || '/'}`);
-      
+
       try {
         // Get artifact info
         const artifact = await artifactManager.read({
           artifact_id: artifactId,
           _rkwargs: true
         });
-        
+
         // List files in the artifact
         const files = await artifactManager.list_files({
           artifact_id: artifactId,
           _rkwargs: true
         });
-        
+
         addLog(`  Found ${files.length} files in artifact`);
-        
+
         const targetDir = srcDir || '/';
-        
+
         // Download and write each file
         for (const file of files) {
           // Handle different response formats from list_files
           let filePath;
-          
+
           if (typeof file === 'string') {
             // If it's just a string, use it as the path
             filePath = file;
@@ -653,48 +1136,51 @@ window.addEventListener('load', async () => {
             console.warn('Unknown file format:', file);
             continue;
           }
-          
+
           // Check if it's actually a file (not a directory)
           const isFile = !file.type || file.type === 'file' || typeof file === 'string';
-          
+
           if (isFile && filePath) {
             addLog(`  Downloading: ${filePath}`);
-            
+
             // Get download URL
             const downloadUrl = await artifactManager.get_file({
               artifact_id: artifactId,
               file_path: filePath,
               _rkwargs: true
             });
-            
+
             // Fetch file content
             const response = await fetch(downloadUrl);
             const content = await response.text();
-            
+
             // Write to WebContainer
             const fullPath = targetDir === '/' ? `/${filePath}` : `${targetDir}/${filePath}`;
             const dir = fullPath.substring(0, fullPath.lastIndexOf('/'));
-            
+
             if (dir && dir !== '') {
               await webcontainerInstance.fs.mkdir(dir, { recursive: true });
             }
-            
+
             await webcontainerInstance.fs.writeFile(fullPath, content);
           }
         }
-        
+
         addLog(`✓ Artifact ${artifactId} loaded successfully`);
-        
+
         // Automatically refresh the file tree after loading
         await window.refreshFileTree();
-        
+
         return { status: 'success', files_count: files.length };
-        
+
       } catch (error) {
         addLog(`✗ Error loading artifact: ${error.message}`);
         throw error;
       }
     }
+
+    // Make loadArtifact globally accessible
+    window.loadArtifact = loadArtifact;
     
     async function spawn(command, args = []) {
       const commandStr = `${command} ${args.join(' ')}`;
